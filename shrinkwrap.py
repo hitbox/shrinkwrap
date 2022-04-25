@@ -1,5 +1,6 @@
 import argparse
 import operator
+import pickle
 import random
 
 from itertools import cycle
@@ -9,50 +10,13 @@ from types import SimpleNamespace
 from lib import rectside
 from lib.external import pygame
 from lib.rectside import RectSide
+from lib.rectutil import rect_get
+from lib.rectutil import rect_get_barriers
+from lib.rectutil import rect_wrap
 
 class ShrinkWrapError(Exception):
     pass
 
-
-def rect_random(inside, allow_zero=False):
-    raise NotImplementedError('TODO: efficient random placement inside empty space.')
-    while True:
-        left, right = sorted(random.randrange(inside.left, inside.right) for _ in range(2))
-        if allow_zero or left != right:
-            break
-    while True:
-        top, bottom = sorted(random.randrange(inside.top, inside.bottom) for _ in range(2))
-        if allow_zero or top != bottom:
-            break
-    return pygame.Rect(left, top, right - left, bottom - top)
-
-def rect_get(rect, **kwargs):
-    result = rect.copy()
-    for key, val in kwargs.items():
-        setattr(result, key, val)
-    return result
-
-def rect_wrap(rects):
-    """
-    Return a rect that wraps around the given rects.
-    """
-    tops, rights, bottoms, lefts = zip(*map(rectside.getsides, rects))
-    top = min(tops)
-    right = max(rights)
-    bottom = max(bottoms)
-    left = min(lefts)
-    return pygame.Rect(left, top, right - left, bottom - top)
-
-def rect_get_barriers(rect):
-    """
-    Return list of rect copies that surround the given rect.
-    """
-    top, right, bottom, left = (rect.copy() for _ in range(4))
-    top.bottom = rect.top
-    right.left = rect.right
-    bottom.top = rect.bottom
-    left.right = rect.left
-    return [top, right, bottom, left]
 
 def rect_stretch_side(rect, side, absolute_value):
     """
@@ -97,31 +61,6 @@ def post_quit():
     """
     pygame.event.post(pygame.event.Event(pygame.QUIT))
 
-def init(ns):
-    """
-    Initialize rects and other objects.
-    """
-    # sample rects to wrap
-    ns.rects = rect_sample_rects(ns)
-    # pick rect to slide a side of
-    ns.selectables = list(ns.rects)
-    ns.selectrectiter = cycle(ns.selectables)
-    ns.selectrect = next(ns.selectrectiter)
-    # slide box from side until collision
-    ns.sideiter = cycle(RectSide)
-    ns.slideside = next(ns.sideiter)
-    #
-    ns.wraprect = rect_wrap(ns.rects)
-    ns.barriers = rect_get_barriers(ns.wraprect)
-    ns.rects.extend(ns.barriers)
-    #
-    # rect growing out of one of the other rects
-    ns.sliderect = ns.slideside.side_rect(ns.selectrect)
-    #
-    ns.drag = None
-    ns.hover = None
-    update_slide_rect(ns)
-
 def loop(ns):
     """
     main loop
@@ -162,37 +101,57 @@ def on_event_keydown(ns):
         # next selectrect
         ns.selectrect = next(ns.selectrectiter)
         update_wraprect(ns)
-        update_slide_rect(ns)
+        update_slide_rect(ns.sliderect, ns.slideside, ns.rects)
     else:
         # next sliderect on any other key
         ns.slideside = next(ns.sideiter)
         ns.sliderect = ns.slideside.side_rect(ns.selectrect)
         update_wraprect(ns)
-        update_slide_rect(ns)
+        update_slide_rect(ns.sliderect, ns.slideside, ns.rects)
 
 def on_event_mousebuttondown(ns):
-    for rect in ns.rects:
-        if rect.collidepoint(ns.event.pos):
-            ns.drag = rect
-            break
-        else:
-            ns.drag = None
+    if ns.event.button == 1:
+        # click to drag rect
+        screen_pos = ns.event.pos
+        world_pos = (
+            screen_pos[0] - ns.camera.x,
+            screen_pos[1] - ns.camera.y,
+        )
+        for rect in ns.rects + [ns.selectrect]:
+            if rect.collidepoint(world_pos):
+                ns.drag = rect
+                break
+            else:
+                ns.drag = None
+    elif ns.event.button == 2:
+        # click move camera
+        ns.drag_camera = True
 
 def on_event_mousebuttonup(ns):
     ns.drag = None
+    ns.drag_camera = None
 
 def on_event_mousemotion(ns):
     if ns.drag:
+        # dragging rect
         dx, dy = ns.event.rel
         ns.drag.x += dx
         ns.drag.y += dy
         update_wraprect(ns)
         ns.sliderect = ns.slideside.side_rect(ns.selectrect)
-        update_slide_rect(ns)
+        update_slide_rect(ns.sliderect, ns.slideside, ns.rects)
+    elif ns.drag_camera:
+        # drag/move camera
+        ns.camera.move_ip(*ns.event.rel)
     else:
         # indicate hovering a selectable
+        screen_pos = ns.event.pos
+        world_pos = (
+            screen_pos[0] - ns.camera.x,
+            screen_pos[1] - ns.camera.y,
+        )
         for rect in ns.selectables:
-            if rect.collidepoint(ns.event.pos):
+            if rect.collidepoint(world_pos):
                 ns.hover = rect
                 break
         else:
@@ -205,6 +164,8 @@ class PathThingy:
     infinity.
     """
     # TODO: class name
+    #       * remove all this dependency and just use the well known attributes
+    #         of rects.
 
     def __init__(self, adjacent1, adjacent2, adjcomp1, adjcomp2):
         self.adjacent1 = adjacent1
@@ -236,22 +197,22 @@ class PathThingy:
         )
 
 
-def update_slide_rect(ns):
-    opposite_name = ns.slideside.opposite().name
-    adjacent1, adjacent2 = ns.slideside.adjacents()
-    if ns.slideside in (RectSide.top, RectSide.left):
+def update_slide_rect(sliderect, slideside, rects):
+    opposite_name = slideside.opposite().name
+    adjacent1, adjacent2 = slideside.adjacents()
+    if slideside in (RectSide.top, RectSide.left):
         compop = operator.lt
     else:
         compop = operator.gt
 
-    if ns.slideside in (RectSide.top, RectSide.right):
+    if slideside in (RectSide.top, RectSide.right):
         adjcomp1 = operator.le
         adjcomp2 = operator.ge
     else:
         adjcomp1 = operator.ge
         adjcomp2 = operator.le
 
-    if ns.slideside in (RectSide.right, RectSide.bottom):
+    if slideside in (RectSide.right, RectSide.bottom):
         aggragate = min
     else:
         aggragate = max
@@ -262,45 +223,43 @@ def update_slide_rect(ns):
 
     def predicate(rect):
         return (
-            rect is not ns.sliderect
-            and compop(opposite_side(rect), ns.slideside.side_value(ns.sliderect))
-            and paththingy.is_inside_path(ns.sliderect, rect)
+            rect is not sliderect
+            and compop(opposite_side(rect), slideside.side_value(sliderect))
+            and paththingy.is_inside_path(sliderect, rect)
         )
 
-    opposite_sides = map(opposite_side, filter(predicate, ns.rects))
+    opposite_sides = map(opposite_side, filter(predicate, rects))
     agg_opposite = aggragate(opposite_sides, default=None)
     if agg_opposite is not None:
-        rect_stretch_side(ns.sliderect, ns.slideside, agg_opposite)
+        # in-place op
+        rect_stretch_side(sliderect, slideside, agg_opposite)
 
 def update(ns):
     """
     update
     """
-    #update_slide_rect(ns)
-    # for some reason updating the sliderect every frame, loses rects from the
-    # "queried" rects.
-    # Probably because we modify the sliderect and cause there to be no more
-    # other rects "to the X of" it.
 
 def update_wraprect(ns):
-    rects = (rect for rect in ns.rects if rect not in ns.barriers)
-    tops, rights, bottoms, lefts = zip(*map(rectside.getsides, rects))
-    top = min(tops)
-    right = max(rights)
-    bottom = max(bottoms)
-    left = min(lefts)
-    ns.wraprect.top = top
-    ns.wraprect.left = left
-    ns.wraprect.width = right - left
-    ns.wraprect.height = bottom - top
-    #
-    for rect in ns.barriers:
-        rect.size = ns.wraprect.size
-    top, right, bottom, left = ns.barriers
-    top.midbottom = ns.wraprect.midtop
-    right.midleft = ns.wraprect.midright
-    bottom.midtop = ns.wraprect.midbottom
-    left.midright = ns.wraprect.midleft
+    if ns.wraprect:
+        rects = (rect for rect in ns.rects if rect not in ns.barriers)
+        tops, rights, bottoms, lefts = zip(*map(rectside.getsides, rects))
+        top = min(tops)
+        right = max(rights)
+        bottom = max(bottoms)
+        left = min(lefts)
+        ns.wraprect.top = top
+        ns.wraprect.left = left
+        ns.wraprect.width = right - left
+        ns.wraprect.height = bottom - top
+        #
+        if len(ns.barriers) == 4:
+            top, right, bottom, left = ns.barriers
+            top.width = bottom.width = ns.wraprect.width
+            left.height = right.height = ns.wraprect.height
+            top.midbottom = ns.wraprect.midtop
+            right.midleft = ns.wraprect.midright
+            bottom.midtop = ns.wraprect.midbottom
+            left.midright = ns.wraprect.midleft
 
 def draw(ns):
     """
@@ -308,39 +267,63 @@ def draw(ns):
     """
     # clear screen
     ns.screen.fill((0,)*3)
-    pygame.draw.rect(ns.screen, (30,)*3, ns.wraprect, 1)
 
-    # XXX
-    # 2022-01-28
-    # Ok, the update function now works in a fairly general fashion, for any of
-    # the four sides.
+    if ns.wraprect:
+        # draw the wrap rect
+        pygame.draw.rect(ns.screen, (30,)*3, ns.wraprect.move(*ns.camera.topleft), 1)
 
     # draw rects
-    for ns_rect in ns.rects + [ns.sliderect]:
-        if ns_rect is ns.hover:
+    for ns_rect in ns.rects + [ns.sliderect, ns.selectrect]:
+        if ns_rect is ns.selectrect:
+            color = (200,10,10)
+        elif ns_rect is ns.hover:
             # TODO: only hover/highlight draggable rects.
             color = (200,200,10)
         elif ns_rect is ns.sliderect:
             color = (200,10,100)
         else:
             color = (100,)*3
-        pygame.draw.rect(ns.screen, color, ns_rect, 1)
-        image = ns.font.render(str(ns_rect), True, color)
-        image_rect = image.get_rect(center=ns_rect.center)
-        if not ns.frame.contains(image_rect):
-            # NOTE: rect_to_clamp.clamp(rect_to_clamp_inside_of)
-            image_rect = image_rect.clamp(ns.frame)
-        ns.screen.blit(image, image_rect)
-        # debug rect
-        #pygame.draw.rect(ns.screen, (200,30,30), image_rect, 1)
+        pygame.draw.rect(ns.screen, color, ns_rect.move(*ns.camera.topleft), 1)
+        if ns.rect_labels:
+            # label
+            image = ns.font.render(str(ns_rect), True, color)
+            image_rect = image.get_rect(center=ns_rect.center)
+            if not ns.frame.contains(image_rect):
+                # NOTE: rect_to_clamp.clamp(rect_to_clamp_inside_of)
+                image_rect = image_rect.clamp(ns.frame)
+            ns.screen.blit(image, image_rect.move(*ns.camera.topleft))
+            # debug rect
+            #pygame.draw.rect(ns.screen, (200,30,30), image_rect, 1)
 
     pygame.display.flip()
+
+def init(ns):
+    """
+    Initialize rects and other objects.
+    """
+    # pick rect to slide a side of
+    ns.selectables = [rect_get(ns.frame, size=(10,10), center=ns.frame.center)]
+    ns.selectrectiter = cycle(ns.selectables)
+    ns.selectrect = next(ns.selectrectiter)
+    # slide box from side until collision
+    ns.sideiter = cycle(RectSide)
+    ns.slideside = next(ns.sideiter)
+    #
+    # rect growing out of one of the other rects
+    ns.sliderect = ns.slideside.side_rect(ns.selectrect)
+    #
+    ns.drag = None
+    ns.hover = None
+    update_slide_rect(ns.sliderect, ns.slideside, ns.rects)
+    #
+    ns.drag_camera = None
 
 def main(argv=None):
     """
     Shrink-wrap a group of pygame.Rect rects.
     """
     parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument('--rects', help='Load rects from pickle.')
     args = parser.parse_args(argv)
 
     ns = SimpleNamespace()
@@ -349,16 +332,47 @@ def main(argv=None):
 
     ns.screen = pygame.display.set_mode((800,)*2)
     ns.frame = ns.screen.get_rect()
+    ns.camera = ns.frame.copy()
     ns.clock = pygame.time.Clock()
     ns.frames_per_second = 60
     ns.font = pygame.font.Font(None, 24)
+    ns.rect_labels = False
 
     ns.on_event = on_event
     ns.update = update
     ns.draw = draw
+
+    ns.wraprect = None
+    ns.barriers = []
+    if args.rects:
+        with open(args.rects, 'rb') as fp:
+            ns.rects = [pygame.Rect(*rectuple) for rectuple in pickle.load(fp)]
+    else:
+        ns.rect_labels = True
+        ns.rects = rect_sample_rects(ns)
+
+    # build walls
+    ns.wraprect = rect_wrap(ns.rects).inflate(50,50)
+    ns.barriers = list(rect_get_barriers(ns.wraprect, 10))
+    ns.rects.extend(ns.barriers)
 
     init(ns)
     loop(ns)
 
 if __name__ == '__main__':
     main()
+
+# 2022-04-25
+# * added option to load rects from subdividerect.py generated pickle
+
+# 2022-03-20
+# * added middle-click camera movement.
+#
+# * This project is shaping up and I would hate to lost any comments I made. So
+#   Below is any old comments I happen to find that would normally be removed.
+#   This comment, (2022-03-20), servs to remind me to add comments I want to
+#   keep, here.
+
+# 2022-01-28
+# Ok, the update function now works in a fairly general fashion, for any of
+# the four sides.
