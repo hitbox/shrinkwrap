@@ -8,6 +8,7 @@ def cut(knife, inside):
     """
     Cut rect `inside` with rect `knife` returning a list of rects.
     """
+    # TODO: allow any cut, ie: remove test with clip
     subrects = []
     knife = knife.clip(inside)
     if knife != inside:

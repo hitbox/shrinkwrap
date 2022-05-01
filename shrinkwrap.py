@@ -362,6 +362,12 @@ def main(argv=None):
 if __name__ == '__main__':
     main()
 
+# 2022-05-01
+# * cleaned up things and put stuff in demos folder.
+# * the only thing left inside here, in shrinkwrap.py, is the projection of
+#   sides of a rect
+# * the stuff lib is pretty good IMHO, maybe it belongs in it's own project?
+
 # 2022-04-25
 # * added option to load rects from subdividerect.py generated pickle
 
