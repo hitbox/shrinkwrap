@@ -2,7 +2,8 @@ from operator import attrgetter
 
 from .external import pygame
 
-# clockwise
+# clockwise sorted list of directions
+# arranged such that +2 "around" it is the opposite side.
 DIRECTIONS = ['top', 'right', 'bottom', 'left']
 
 sides = attrgetter(*DIRECTIONS)

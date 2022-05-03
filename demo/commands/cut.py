@@ -28,6 +28,7 @@ ns = SimpleNamespace(
     mode = modes[0],
     fill = None,
     fill_rects = [],
+    zoom = 1,
 )
 
 def on_event(event):
@@ -70,8 +71,11 @@ def on_mousebuttondown(event):
         if event.button == pygame.BUTTON_LEFT:
             # start drag
             ns.drag = get_worldpos(event.pos)
-    elif ns.mode == 'fill' and event.button == 1:
+    elif event.button == 1 and ns.mode == 'fill' :
         do_fill(get_worldpos(event.pos))
+
+def on_mousewheel(event):
+    ns.zoom += event.y
 
 def on_mousebuttonup(event):
     if ns.move_camera and event.button == 2:
@@ -130,9 +134,13 @@ def subdivide_all(knife, rects, cutter):
         ops = rectop.join.defrag(newrects)
         rectop.join.apply(ops, rects)
 
+def zoomrect(rect, zoom):
+    return pygame.Rect(rect.x*zoom, rect.y*zoom, rect.width*zoom, rect.height*zoom)
+
 def draw():
     ns.screen.fill((0,0,0))
-    pygame.draw.rect(ns.screen, (100,)*3, ns.field.move(*ns.camera.topleft), 1)
+    # draw field
+    pygame.draw.rect(ns.screen, (100,)*3, zoomrect(ns.field, ns.zoom).move(*ns.camera.topleft), 1)
     mousepos = get_worldpos(pygame.mouse.get_pos())
     status = [f'{len(ns.rects)!r}']
     for rect in ns.rects + ns.fill_rects:
@@ -151,15 +159,18 @@ def draw():
             width = 4
         else:
             width = 1
-        pygame.draw.rect(ns.screen, color, rect.move(*ns.camera.topleft), width)
+        pygame.draw.rect(ns.screen, color, zoomrect(rect, ns.zoom).move(*ns.camera.topleft), width)
 
     if ns.drag:
         rect = rect_from_points([ns.drag, mousepos])
+        rect = zoomrect(rect, ns.zoom)
         pygame.draw.rect(ns.screen, (10,200,10), rect.move(*ns.camera.topleft), 1)
 
     font = pygame.font.Font(None, 24)
     image = font.render(ns.mode, True, (200,20,20))
-    ns.screen.blit(image, image.get_rect(topright=ns.frame.inflate(-10,-10).topright))
+    rect = image.get_rect(topright=ns.frame.inflate(-10,-10).topright)
+    rect = zoomrect(rect, ns.zoom)
+    ns.screen.blit(image, rect)
 
     image = font.render(f'world: {mousepos}', True, (200,)*3)
     rect = image.get_rect(bottomright=ns.frame.bottomright)
@@ -216,6 +227,7 @@ def run(args):
     dispatch[pygame.MOUSEBUTTONDOWN] = on_mousebuttondown
     dispatch[pygame.MOUSEBUTTONUP] = on_mousebuttonup
     dispatch[pygame.MOUSEMOTION] = on_mousemotion
+    dispatch[pygame.MOUSEWHEEL] = on_mousewheel
 
     ns.field = ns.frame.copy()
 
