@@ -2,6 +2,21 @@
 
 Thinking about how to find a polygon the shrink wraps a group of rects.
 
+# TODO
+
+Update this readme--a lot has changed.
+Fix zoom functionality.
+Finish implementing flood fill with rects.
+Probably only keeping rectop, not lib.
+Maybe a generic engine in lib, from the engines in demo/commands.
+rectop should probably be its own repo.
+Has the new pygame releases already implemented some of rectop?
+"Rect manager" A bunch of simple rect managing operations that can be combined into a window manager.
+Slide rect manager. Drag rects like a tiled window manager.
+Rect handle manager. Drag the corners and side of rects.
+Slide or drag rect by it's "header"?
+
+
 # NOTES
 
 ## shrinkwap.py
