@@ -1,10 +1,10 @@
 from . import get
 from .external import pygame
 
-def position(knife, rect):
+def position(pos, rect):
     """
+    Subdivide rect at position `pos`.
     """
-    pos = tuple(knife)[:2]
     if not rect.collidepoint(pos):
         return
     x, y = pos
@@ -21,7 +21,7 @@ def position(knife, rect):
     rects = [rect for rect in rects if rect.width > 0 and rect.height > 0]
     return rects
 
-def rect(knife, rect):
+def with_knife(knife, rect):
     """
     Cut rect `rect` with rect `knife` returning a list of rects.
     """
@@ -35,7 +35,6 @@ def rect(knife, rect):
         left_width = knife.left - rect.left
         right_width = rect.right - knife.right
         bottom_height = rect.bottom - knife.bottom
-
         subrects = [
             # upper-left
             pygame.Rect(rect.topleft, (left_width, top_height)),
@@ -54,8 +53,16 @@ def rect(knife, rect):
             # mid-left
             pygame.Rect((rect.left, knife.top), (left_width, knife.height)),
         ]
-
         # remove zero size rects
         # TODO: what happens in negative cartesian space?
         subrects = [rect for rect in subrects if rect.width > 0 and rect.height > 0]
     return subrects
+
+def all(knife, rect_list):
+    """
+    """
+    touching = [rect for rect in rect_list if rect.colliderect(knife)]
+    all_subrects = [subrect for touched in touching for subrect in with_knife(knife, touched)]
+    for rect in touching:
+        rect_list.remove(rect)
+    rect_list.extend(all_subrects)

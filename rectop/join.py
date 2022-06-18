@@ -2,31 +2,10 @@ from itertools import combinations
 from itertools import tee
 
 from . import get
-
-def is_joinable(r1, r2):
-    """
-    Return whether two rects are joinable, ie: they are the same or they
-    exactly share a side.
-    """
-    top1, right1, bottom1, left1 = get.sides(r1)
-    top2, right2, bottom2, left2 = get.sides(r2)
-    return (
-        r1 == r2
-        or (
-            top1 == top2
-            and bottom1 == bottom2
-            and (right1 == left2 or left1 == right2)
-        )
-        or (
-            left1 == left2
-            and right1 == right2
-            and (top1 == bottom2 or bottom1 == top2)
-        )
-    )
+from . import query
 
 def defrag(rects):
     """
-    Join rects in-place
     """
     def area(item):
         r1, r2, wrapped = item
@@ -43,7 +22,7 @@ def defrag(rects):
         with_ops = (rect for rect in rects + append_ops if rect not in remove_ops)
         # generate 2-tuples of rects that can be joined
         joinables = (
-            (r1, r2) for r1, r2 in combinations(with_ops, 2) if is_joinable(r1, r2)
+            (r1, r2) for r1, r2 in combinations(with_ops, 2) if query.is_joinable(r1, r2)
         )
         # duplicate generator to efficiently test and, if it has joinables,
         # join them
@@ -68,3 +47,7 @@ def apply(defrag_result, rects):
         rects.append(newrect)
     for redundant in defrag_result['remove']:
         rects.remove(redundant)
+
+def defrag_ip(rects):
+    ops = defrag(rects)
+    apply(ops, rects)
